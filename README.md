@@ -43,13 +43,13 @@
 
 ## 📂 リポジトリ構成
 
-bridge-risk-analysis/
-├── app/
-│ └── streamlit_app.py # ダッシュボード本体
-├── data/
-│ └── processed/
-│ └── final_analysis_gdf.gpkg # 分析済み最終データ
-└── requirements.txt
+bridge-risk-analysis/  
+├── app/  
+│ └── streamlit_app.py # ダッシュボード本体  
+├── data/  
+│ └── processed/  
+│ └── final_analysis_gdf.gpkg # 分析済み最終データ  
+└── requirements.txt  
 
 ※ データ取得・前処理・クラスタリングなどの分析過程（Jupyter Notebook）は、
 本リポジトリには含めていません。
