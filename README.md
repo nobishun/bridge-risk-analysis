@@ -32,7 +32,7 @@
 
 ## 🔧 使用データ
 
-- [国土交通データプラットフォーム](https://www.mlit-data.jp/)：橋梁データ（rsdb_bridge）、道路交通センサス（rtc_2021）
+- [国土交通データプラットフォーム](https://data-platform.mlit.go.jp/)：橋梁データ（rsdb_bridge）、道路交通センサス（rtc_2021）
 - [OpenStreetMap](https://www.openstreetmap.org/)：道路ネットワークデータ（`osmnx`経由で取得）
 
 ## 🛠️ 技術スタック
