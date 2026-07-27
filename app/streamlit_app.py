@@ -162,8 +162,10 @@ def route_wkt_to_latlon_lines(route_wkt: str):
 # データ読み込み
 # ---------------------------------------------------------------------------
 st.title("🌉 橋梁リスク可視化ダッシュボード")
-st.caption("東京23区の橋梁データを、地図上で属性ごとに絞り込んで確認できます。")
-
+st.caption("データサイエンスの個人学習記録です。オープンデータの東京23区の橋梁データをもとに、交通量・迂回路長などの観点から、 補修・補強の優先度設定を試行した結果を可視化するダッシュボードです。)
+st.caption("Githubはこちら: https://github.com/nobishun/bridge-risk-analysis.git")
+st.caption("※作業中です")
+           
 default_path = find_default_data_path()
 
 if default_path is not None:
