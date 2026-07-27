@@ -19,6 +19,28 @@ from shapely import wkt
 from shapely.geometry import LineString, MultiLineString
 from streamlit_folium import st_folium
 
+from pathlib import Path
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+# --- 日本語フォントの設定 ---
+# コードがあるディレクトリから見たフォントファイルのパスを指定
+# (app/app.py から見て app/fonts/NotoSansJP-Regular.ttf を参照する場合)
+FONT_PATH = Path(__file__).parent / "fonts" / "NotoSansJP-Regular.ttf"
+
+if FONT_PATH.exists():
+    # 1. Matplotlibにフォントを追加
+    fm.fontManager.addfont(str(FONT_PATH))
+
+    # 2. 追加したフォントの内部名を取得して全体に適用
+    font_prop = fm.FontProperties(fname=str(FONT_PATH))
+    plt.rcParams["font.family"] = font_prop.get_name()
+
+    # 3. マイナス記号（-）の文字化け（豆腐化）を防止
+    plt.rcParams["axes.unicode_minus"] = False
+else:
+    print(f"Warning: フォントファイルが見つかりません: {FONT_PATH}")
+
 st.set_page_config(page_title="橋梁リスク可視化ダッシュボード", layout="wide")
 
 # ---------------------------------------------------------------------------
