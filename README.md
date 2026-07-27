@@ -35,6 +35,8 @@
 - [国土交通データプラットフォーム](https://data-platform.mlit.go.jp/)：橋梁データ（rsdb_bridge）、道路交通センサス（rtc_2021）
 - [OpenStreetMap](https://www.openstreetmap.org/)：道路ネットワークデータ（`osmnx`経由で取得）
 
+> ※国土交通データプラットフォーム API機能利用規約より、「このサービスは、国土交通データプラットフォームのAPI機能を使用していますが、最新のデータを保証するものではありません。」
+
 ## 🛠️ 技術スタック
 
 - Python (pandas, geopandas, scikit-learn, networkx, osmnx)
