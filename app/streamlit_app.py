@@ -9,6 +9,7 @@ import tempfile
 
 import folium
 import geopandas as gpd
+import japanize_matplotlib  # matplotlib/seabornグラフの日本語表示に必要
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -89,9 +90,13 @@ def load_data(file_source) -> pd.DataFrame:
     gdf["lon"] = gdf.geometry.x
 
     df = pd.DataFrame(gdf.drop(columns="geometry"))
+    # GeoPackageによっては架設年度が文字列型で保存されていることがあるため、数値型に変換しておく
+    # （グラフ描画・中央値計算でのエラーを防ぐため）
+    df["dpf_kasetsu_nendo"] = pd.to_numeric(df["dpf_kasetsu_nendo"], errors="coerce")
     df["cluster_label_ja"] = df["cluster_6_label"].map(CLUSTER_LABELS)
     df["highway_label_ja"] = df["osm_highway_aggregated"].map(HIGHWAY_LABELS)
     df["quadrant_label_ja"] = df["traffic_detour_quadrant"].map(QUADRANT_LABELS)
+    df["oneway_label_ja"] = df["osm_oneway"].map({0: "一方通行ではない", 1: "一方通行", False: "一方通行ではない", True: "一方通行"})
     return df
 
 
@@ -349,21 +354,60 @@ with tab_eda:
             st.pyplot(fig)
             plt.close(fig)
 
-    # --- クラスター別の箱ひげ図 ---
+    # --- クラスター別の箱ひげ図（数値変数：すべて小さめに一覧表示） ---
     st.subheader("クラスター別の分布（箱ひげ図）")
-    box_col = st.selectbox("表示する変数を選択", list(numeric_cols.keys()), format_func=lambda c: numeric_cols[c])
-    fig, ax = plt.subplots(figsize=(8, 4))
+    st.caption("赤い破線は、その変数の全体（クラスター全体）における中央値です。")
     order = sorted(df["cluster_6_label"].unique())
-    sns.boxplot(
-        data=df, x="cluster_6_label", y=box_col, order=order,
-        hue="cluster_6_label", palette=CLUSTER_COLORS, legend=False, ax=ax,
-    )
-    ax.axhline(df[box_col].median(), color="red", linestyle="--", label="全体の中央値")
-    ax.set_xlabel("クラスター番号")
-    ax.set_ylabel(numeric_cols[box_col])
-    ax.legend()
-    st.pyplot(fig)
-    plt.close(fig)
+    box_cols_per_row = 3
+    numeric_items = list(numeric_cols.items())
+    for row_start in range(0, len(numeric_items), box_cols_per_row):
+        row_items = numeric_items[row_start:row_start + box_cols_per_row]
+        cols = st.columns(len(row_items))
+        for col_widget, (col, label) in zip(cols, row_items):
+            with col_widget:
+                fig, ax = plt.subplots(figsize=(3.5, 2.8))
+                # 【注意】sns.boxplotは、hue指定時に legend=False を渡すと
+                # seabornのバージョンによってUnboundLocalErrorになることがあるため、
+                # legend=Falseは使わず、描画後にlegendオブジェクトを明示的に削除する。
+                sns.boxplot(
+                    data=df, x="cluster_6_label", y=col, order=order,
+                    hue="cluster_6_label", palette=CLUSTER_COLORS, ax=ax,
+                )
+                if ax.get_legend() is not None:
+                    ax.get_legend().remove()
+                ax.axhline(df[col].median(), color="red", linestyle="--", linewidth=1)
+                ax.set_title(label, fontsize=10)
+                ax.set_xlabel("クラスター", fontsize=8)
+                ax.set_ylabel("")
+                ax.tick_params(labelsize=8)
+                st.pyplot(fig)
+                plt.close(fig)
+
+    # --- クラスター別のカテゴリ変数分布（構成比の積み上げ棒グラフ） ---
+    st.subheader("クラスター別の分布（カテゴリ変数）")
+    category_specs = [
+        ("osm_highway_aggregated", "道路種別", HIGHWAY_LABELS),
+        ("osm_oneway", "一方通行の区分", {0: "一方通行ではない", 1: "一方通行"}),
+    ]
+    cat_cols = st.columns(len(category_specs))
+    for col_widget, (col, title, label_map) in zip(cat_cols, category_specs):
+        with col_widget:
+            plot_data = (
+                df.groupby("cluster_6_label")[col]
+                .value_counts(normalize=True)
+                .unstack(fill_value=0)
+                .reindex(order)
+            )
+            plot_data = plot_data.rename(columns=label_map)
+            fig, ax = plt.subplots(figsize=(5, 3.5))
+            plot_data.plot(kind="bar", stacked=True, ax=ax, cmap="viridis")
+            ax.set_title(f"クラスター別 {title} 構成比", fontsize=10)
+            ax.set_xlabel("クラスター番号")
+            ax.set_ylabel("構成比")
+            ax.tick_params(axis="x", rotation=0)
+            ax.legend(title=title, bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
+            st.pyplot(fig)
+            plt.close(fig)
 
     # --- 相関ヒートマップ ---
     st.subheader("数値変数の相関")
