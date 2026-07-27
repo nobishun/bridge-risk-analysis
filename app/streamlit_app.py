@@ -9,7 +9,7 @@ import tempfile
 
 import folium
 import geopandas as gpd
-import japanize_matplotlib  # matplotlib/seabornグラフの日本語表示に必要
+#import japanize_matplotlib  # matplotlib/seabornグラフの日本語表示に必要←Python(3.14)に非対応
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
