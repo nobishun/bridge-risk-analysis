@@ -54,7 +54,7 @@ bridge-risk-analysis/
 └── requirements.txt  
 
 ※ データ取得・前処理・クラスタリングなどの分析過程（Jupyter Notebook）は、
-本リポジトリには含めていません。
+整理中。
 
 ## ⚠️ 既知の課題
 
