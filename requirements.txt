@@ -6,3 +6,4 @@ streamlit-folium
 matplotlib
 seaborn
 shapely
+japanize-matplotlib
