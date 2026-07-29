@@ -96,6 +96,11 @@ def load_data(file_source) -> pd.DataFrame:
     # GeoPackageによっては架設年度が文字列型で保存されていることがあるため、数値型に変換しておく
     # （グラフ描画・中央値計算でのエラーを防ぐため）
     df["dpf_kasetsu_nendo"] = pd.to_numeric(df["dpf_kasetsu_nendo"], errors="coerce")
+    # 【注意】GeoPackage上でosm_onewayがBOOLEAN型として保存されていると、
+    # 読み込み時にPythonのbool型(True/False)になることがある。bool型のまま引き算をすると
+    # 「numpy boolean subtract」というTypeErrorになる（レーダーチャートの正規化で発生）ため、
+    # ここで明示的にint型(0/1)へ変換しておく。
+    df["osm_oneway"] = df["osm_oneway"].astype(int)
     # 【注意】迂回路が見つからなかった橋はdetour_length_mがinf(無限大)のまま
     # 保存されていることがある(notebook側で中央値補完がbridges_gdfに反映されていないケース)。
     # inf のままだとグラフの正規化や表示が壊れるため、ここで欠損(NaN)として扱う。
@@ -105,7 +110,7 @@ def load_data(file_source) -> pd.DataFrame:
     df["cluster_label_ja"] = df["cluster_6_label"].map(CLUSTER_LABELS)
     df["highway_label_ja"] = df["osm_highway_aggregated"].map(HIGHWAY_LABELS)
     df["quadrant_label_ja"] = df["traffic_detour_quadrant"].map(QUADRANT_LABELS)
-    df["oneway_label_ja"] = df["osm_oneway"].map({0: "一方通行ではない", 1: "一方通行", False: "一方通行ではない", True: "一方通行"})
+    df["oneway_label_ja"] = df["osm_oneway"].map({0: "一方通行ではない", 1: "一方通行"})
     return df
 
 
@@ -453,7 +458,7 @@ with tab_eda:
     radar_axes = dict(numeric_cols)
     radar_axes["osm_oneway"] = "一方通行率"
 
-    radar_source = df[list(radar_axes.keys())].copy()
+    radar_source = df[list(radar_axes.keys())].astype(float).copy()
     normalized = (radar_source - radar_source.min()) / (radar_source.max() - radar_source.min())
     normalized["cluster_6_label"] = df["cluster_6_label"]
     cluster_means = normalized.groupby("cluster_6_label").mean().reindex(order)
