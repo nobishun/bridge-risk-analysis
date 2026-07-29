@@ -9,39 +9,20 @@ import tempfile
 
 import folium
 import geopandas as gpd
-#import japanize_matplotlib  # matplotlib/seabornグラフの日本語表示に必要←Python(3.14)に非対応
-import matplotlib.pyplot as plt
 import pandas as pd
-import seaborn as sns
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 from folium.plugins import MarkerCluster
 from shapely import wkt
 from shapely.geometry import LineString, MultiLineString
 from streamlit_folium import st_folium
 
-from pathlib import Path
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-
-# --- 日本語フォントの設定 ---
-# コードがあるディレクトリから見たフォントファイルのパスを指定
-# (app/app.py から見て app/fonts/NotoSansJP-Regular.ttf を参照する場合)
-FONT_PATH = Path(__file__).parent / "fonts" / "NotoSansJP-Regular.ttf"
-
-if FONT_PATH.exists():
-    # 1. Matplotlibにフォントを追加
-    fm.fontManager.addfont(str(FONT_PATH))
-
-    # 2. 追加したフォントの内部名を取得して全体に適用
-    font_prop = fm.FontProperties(fname=str(FONT_PATH))
-    plt.rcParams["font.family"] = font_prop.get_name()
-
-    # 3. マイナス記号（-）の文字化け（豆腐化）を防止
-    plt.rcParams["axes.unicode_minus"] = False
-else:
-    print(f"Warning: フォントファイルが見つかりません: {FONT_PATH}")
-
 st.set_page_config(page_title="橋梁リスク可視化ダッシュボード", layout="wide")
+
+# 【備考】以前は matplotlib/seaborn でグラフを描画しており、日本語フォントの設定
+# （japanize_matplotlibやフォントファイルの同梱）が必要だった。Plotlyはブラウザ側で
+# 描画されるため、サーバー側のフォント環境に左右されず日本語もそのまま表示できる。
 
 # ---------------------------------------------------------------------------
 # クラスター・道路種別を分かりやすい日本語ラベルに変換するための対応表
@@ -115,6 +96,12 @@ def load_data(file_source) -> pd.DataFrame:
     # GeoPackageによっては架設年度が文字列型で保存されていることがあるため、数値型に変換しておく
     # （グラフ描画・中央値計算でのエラーを防ぐため）
     df["dpf_kasetsu_nendo"] = pd.to_numeric(df["dpf_kasetsu_nendo"], errors="coerce")
+    # 【注意】迂回路が見つからなかった橋はdetour_length_mがinf(無限大)のまま
+    # 保存されていることがある(notebook側で中央値補完がbridges_gdfに反映されていないケース)。
+    # inf のままだとグラフの正規化や表示が壊れるため、ここで欠損(NaN)として扱う。
+    df["detour_length_m"] = df["detour_length_m"].where(
+        ~df["detour_length_m"].isin([float("inf"), float("-inf")])
+    )
     df["cluster_label_ja"] = df["cluster_6_label"].map(CLUSTER_LABELS)
     df["highway_label_ja"] = df["osm_highway_aggregated"].map(HIGHWAY_LABELS)
     df["quadrant_label_ja"] = df["traffic_detour_quadrant"].map(QUADRANT_LABELS)
@@ -162,10 +149,14 @@ def route_wkt_to_latlon_lines(route_wkt: str):
 # データ読み込み
 # ---------------------------------------------------------------------------
 st.title("🌉 橋梁リスク可視化ダッシュボード")
-st.caption("データサイエンスの個人学習記録です。オープンデータの東京23区の橋梁データをもとに、交通量・迂回路長などの観点から、 補修・補強の優先度設定を試行した結果を可視化するダッシュボードです。")
-st.caption("Githubはこちら: https://github.com/nobishun/bridge-risk-analysis.git")
-st.caption("※作業中です")
-           
+st.markdown(
+    "データサイエンスの個人学習記録です。オープンデータの東京23区の橋梁データをもとに、"
+    "交通量・迂回路長などの観点から、補修・補強の優先度設定を試行した結果を可視化するダッシュボードです。\n\n"
+    "GitHubはこちら： https://github.com/nobishun/bridge-risk-analysis\n\n"
+    "※現在も作業中のプロジェクトです。"
+)
+st.caption("東京23区の橋梁データを、地図上で属性ごとに絞り込んで確認できます。")
+
 default_path = find_default_data_path()
 
 if default_path is not None:
@@ -269,12 +260,13 @@ with tab_map:
         marker_cluster = MarkerCluster().add_to(m)
 
         for _, row in filtered_df.iterrows():
+            detour_display = f"{row['detour_length_m']:.0f}m" if pd.notna(row["detour_length_m"]) else "算出不可"
             popup_html = f"""
             <b>{row['bridge_name']}</b><br>
             架設年度: {row['dpf_kasetsu_nendo']}年<br>
             幅員: {row['dpf_fukuin']:.1f}m / 橋長: {row['dpf_kyouchou']:.1f}m<br>
             交通量: {row['traffic_count_24h_auto']:.0f}台/日<br>
-            迂回路長: {row['detour_length_m']:.0f}m<br>
+            迂回路長: {detour_display}<br>
             分類: {row['cluster_label_ja']}<br>
             交通量×迂回路: {row['quadrant_label_ja']}<br>
             優先度順位: {int(row['overall_rank'])}位 / {len(df)}件中
@@ -301,13 +293,14 @@ with tab_map:
                 )
             else:
                 for _, row in routable_df.iterrows():
+                    detour_display = f"{row['detour_length_m']:.0f}m" if pd.notna(row["detour_length_m"]) else "算出不可"
                     for line_coords in route_wkt_to_latlon_lines(row["detour_route_wkt"]):
                         folium.PolyLine(
                             line_coords,
                             color="#2E8B57",
                             weight=4,
                             opacity=0.8,
-                            tooltip=f"{row['bridge_name']} の迂回路（長さ約{row['detour_length_m']:.0f}m）",
+                            tooltip=f"{row['bridge_name']} の迂回路（長さ約{detour_display}）",
                         ).add_to(m)
 
         st.subheader("地図")
@@ -346,17 +339,7 @@ with tab_map:
 
 # ============================= EDAタブ =======================================
 with tab_eda:
-    st.caption("全1,226件のデータ全体をもとにした分布・相関の確認です（左側の絞り込み条件とは独立して表示しています）。")
-
-    # --- クラスターごとの件数 ---
-    st.subheader("クラスター別の件数")
-    cluster_counts = df["cluster_label_ja"].value_counts().sort_index()
-    fig, ax = plt.subplots(figsize=(8, 4))
-    cluster_counts.plot(kind="barh", ax=ax, color=[CLUSTER_COLORS.get(i, "#333333") for i in range(len(cluster_counts))])
-    ax.set_xlabel("件数")
-    ax.set_ylabel("")
-    st.pyplot(fig)
-    plt.close(fig)
+    st.caption(f"全{len(df):,}件のデータ全体をもとにした分布・相関の確認です（左側の絞り込み条件とは独立して表示しています）。")
 
     numeric_cols = {
         "dpf_kasetsu_nendo": "架設年度",
@@ -365,23 +348,55 @@ with tab_eda:
         "traffic_count_24h_auto": "交通量(台/日)",
         "detour_length_m": "迂回路長(m)",
     }
+    order = sorted(df["cluster_6_label"].unique())
+    cluster_order_labels = [CLUSTER_LABELS.get(c, str(c)) for c in order]
+
+    # --- クラスターごとの件数 ---
+    st.subheader("クラスター別の件数")
+    cluster_counts = (
+        df["cluster_label_ja"].value_counts().reindex(cluster_order_labels).reset_index()
+    )
+    cluster_counts.columns = ["クラスター", "件数"]
+    fig = px.bar(
+        cluster_counts, x="件数", y="クラスター", orientation="h",
+        color="クラスター",
+        color_discrete_map={CLUSTER_LABELS[c]: CLUSTER_COLORS[c] for c in order},
+    )
+    fig.update_layout(showlegend=False, yaxis={"categoryorder": "array", "categoryarray": cluster_order_labels[::-1]})
+    st.plotly_chart(fig, use_container_width=True)
 
     # --- 数値変数の分布 ---
     st.subheader("数値変数の分布")
+    st.caption("グラフ上でドラッグすると拡大表示できます（ダブルクリックで元に戻ります）。")
     cols = st.columns(3)
     for i, (col, label) in enumerate(numeric_cols.items()):
         with cols[i % 3]:
-            fig, ax = plt.subplots(figsize=(4, 3))
-            sns.histplot(df[col].dropna(), ax=ax, color="#4C72B0")
-            ax.set_title(label, fontsize=10)
-            ax.set_xlabel("")
-            st.pyplot(fig)
-            plt.close(fig)
+            fig = px.histogram(df, x=col, nbins=30, color_discrete_sequence=["#4C72B0"])
+            fig.update_layout(
+                title=label, xaxis_title="", yaxis_title="件数",
+                margin=dict(l=10, r=10, t=40, b=10), height=280,
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-    # --- クラスター別の箱ひげ図（数値変数：すべて小さめに一覧表示） ---
+    # --- カテゴリ変数の分布（全体） ---
+    st.subheader("カテゴリ変数の分布（全体）")
+    cat_overall_specs = [
+        ("osm_highway_aggregated", "道路種別", HIGHWAY_LABELS),
+        ("osm_oneway", "一方通行の区分", {0: "一方通行ではない", 1: "一方通行"}),
+    ]
+    cat_overall_cols = st.columns(len(cat_overall_specs))
+    for col_widget, (col, title, label_map) in zip(cat_overall_cols, cat_overall_specs):
+        with col_widget:
+            counts = df[col].map(label_map).value_counts().reset_index()
+            counts.columns = [title, "件数"]
+            fig = px.pie(counts, names=title, values="件数", hole=0.4)
+            fig.update_traces(textinfo="percent+label")
+            fig.update_layout(title=f"{title}の構成比（全体）", margin=dict(l=10, r=10, t=40, b=10), height=350)
+            st.plotly_chart(fig, use_container_width=True)
+
+    # --- クラスター別の箱ひげ図（数値変数：すべて一覧表示） ---
     st.subheader("クラスター別の分布（箱ひげ図）")
-    st.caption("赤い破線は、その変数の全体（クラスター全体）における中央値です。")
-    order = sorted(df["cluster_6_label"].unique())
+    st.caption("赤い破線は、その変数の全体（クラスター全体）における中央値です。凡例のクリックで表示・非表示を切り替えられます。")
     box_cols_per_row = 3
     numeric_items = list(numeric_cols.items())
     for row_start in range(0, len(numeric_items), box_cols_per_row):
@@ -389,23 +404,17 @@ with tab_eda:
         cols = st.columns(len(row_items))
         for col_widget, (col, label) in zip(cols, row_items):
             with col_widget:
-                fig, ax = plt.subplots(figsize=(3.5, 2.8))
-                # 【注意】sns.boxplotは、hue指定時に legend=False を渡すと
-                # seabornのバージョンによってUnboundLocalErrorになることがあるため、
-                # legend=Falseは使わず、描画後にlegendオブジェクトを明示的に削除する。
-                sns.boxplot(
-                    data=df, x="cluster_6_label", y=col, order=order,
-                    hue="cluster_6_label", palette=CLUSTER_COLORS, ax=ax,
+                fig = px.box(
+                    df, x="cluster_6_label", y=col, color="cluster_6_label",
+                    color_discrete_map=CLUSTER_COLORS,
+                    category_orders={"cluster_6_label": order},
                 )
-                if ax.get_legend() is not None:
-                    ax.get_legend().remove()
-                ax.axhline(df[col].median(), color="red", linestyle="--", linewidth=1)
-                ax.set_title(label, fontsize=10)
-                ax.set_xlabel("クラスター", fontsize=8)
-                ax.set_ylabel("")
-                ax.tick_params(labelsize=8)
-                st.pyplot(fig)
-                plt.close(fig)
+                fig.add_hline(y=df[col].median(), line_dash="dash", line_color="red")
+                fig.update_layout(
+                    title=label, xaxis_title="クラスター", yaxis_title="",
+                    showlegend=False, margin=dict(l=10, r=10, t=40, b=10), height=300,
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
     # --- クラスター別のカテゴリ変数分布（構成比の積み上げ棒グラフ） ---
     st.subheader("クラスター別の分布（カテゴリ変数）")
@@ -421,25 +430,62 @@ with tab_eda:
                 .value_counts(normalize=True)
                 .unstack(fill_value=0)
                 .reindex(order)
+                .rename(columns=label_map)
+                .reset_index()
             )
-            plot_data = plot_data.rename(columns=label_map)
-            fig, ax = plt.subplots(figsize=(5, 3.5))
-            plot_data.plot(kind="bar", stacked=True, ax=ax, cmap="viridis")
-            ax.set_title(f"クラスター別 {title} 構成比", fontsize=10)
-            ax.set_xlabel("クラスター番号")
-            ax.set_ylabel("構成比")
-            ax.tick_params(axis="x", rotation=0)
-            ax.legend(title=title, bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
-            st.pyplot(fig)
-            plt.close(fig)
+            plot_data["cluster_6_label"] = plot_data["cluster_6_label"].astype(str)
+            fig = px.bar(
+                plot_data, x="cluster_6_label", y=list(label_map.values()),
+                title=f"クラスター別 {title} 構成比",
+            )
+            fig.update_layout(
+                xaxis_title="クラスター番号", yaxis_title="構成比", legend_title=title,
+                margin=dict(l=10, r=10, t=40, b=10), height=380,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    # --- クラスターの特徴レーダーチャート ---
+    st.subheader("クラスター特徴のレーダーチャート")
+    st.caption(
+        "各変数を全体の範囲で0〜1に正規化した上での、クラスターごとの平均値を表しています。"
+        "凡例のクリックで特定のクラスターだけを表示・比較できます。"
+    )
+    radar_axes = dict(numeric_cols)
+    radar_axes["osm_oneway"] = "一方通行率"
+
+    radar_source = df[list(radar_axes.keys())].copy()
+    normalized = (radar_source - radar_source.min()) / (radar_source.max() - radar_source.min())
+    normalized["cluster_6_label"] = df["cluster_6_label"]
+    cluster_means = normalized.groupby("cluster_6_label").mean().reindex(order)
+
+    theta_labels = list(radar_axes.values())
+    fig = go.Figure()
+    for c in order:
+        values = cluster_means.loc[c, list(radar_axes.keys())].tolist()
+        fig.add_trace(go.Scatterpolar(
+            r=values + values[:1],
+            theta=theta_labels + theta_labels[:1],
+            fill="toself",
+            name=CLUSTER_LABELS.get(c, str(c)),
+            line_color=CLUSTER_COLORS.get(c, "#333333"),
+            opacity=0.7,
+        ))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+        showlegend=True, height=550,
+        margin=dict(l=40, r=40, t=40, b=40),
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
     # --- 相関ヒートマップ ---
     st.subheader("数値変数の相関")
     corr = df[list(numeric_cols.keys())].rename(columns=numeric_cols).corr()
-    fig, ax = plt.subplots(figsize=(6, 5))
-    sns.heatmap(corr, annot=True, cmap="coolwarm", fmt=".2f", vmin=-1, vmax=1, ax=ax)
-    st.pyplot(fig)
-    plt.close(fig)
+    fig = px.imshow(
+        corr, text_auto=".2f", color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
+        aspect="auto",
+    )
+    fig.update_layout(margin=dict(l=10, r=10, t=20, b=10), height=500)
+    st.plotly_chart(fig, use_container_width=True)
 
     st.caption(
         "各クラスターの特徴の言語的な解釈は、notebook（`03_eda_clustering.ipynb`）内の"
