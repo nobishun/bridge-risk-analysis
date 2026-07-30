@@ -202,10 +202,6 @@ only_high_priority = st.sidebar.checkbox(
 )
 
 st.sidebar.markdown("---")
-bridge_names = ["（指定しない）"] + sorted(df["bridge_name"].unique().tolist())
-selected_bridge = st.sidebar.selectbox("特定の橋を検索して表示", bridge_names)
-
-st.sidebar.markdown("---")
 st.sidebar.subheader("🛣️ 迂回路ルート")
 if has_route_data:
     show_detour_routes = st.sidebar.checkbox("迂回路ルートを地図に表示する", value=False)
@@ -229,7 +225,7 @@ st.sidebar.caption(
 )
 
 # ---------------------------------------------------------------------------
-# 絞り込み処理
+# 絞り込み処理（サイドバー：クラスター・道路種別・優先度上位30）
 # ---------------------------------------------------------------------------
 filtered_df = df[
     df["cluster_6_label"].isin(selected_clusters)
@@ -239,91 +235,47 @@ filtered_df = df[
 if only_high_priority:
     filtered_df = filtered_df.sort_values("overall_rank").head(30)
 
-if selected_bridge != "（指定しない）":
-    filtered_df = filtered_df[filtered_df["bridge_name"] == selected_bridge]
-
-st.write(f"**表示件数：{len(filtered_df)} 件** / 全{len(df)}件")
-
 # ---------------------------------------------------------------------------
-# タブ構成：地図 / EDA
+# タブ構成：地図 / EDA / 優先順位の考え方
 # ---------------------------------------------------------------------------
-tab_map, tab_eda = st.tabs(["🗺️ 地図", "📊 EDA（探索的データ分析）"])
+tab_map, tab_eda, tab_priority = st.tabs(
+    ["🗺️ 地図", "📊 EDA（探索的データ分析）", "📋 優先順位の考え方"]
+)
 
 # ============================= 地図タブ =====================================
 with tab_map:
+    # ------------------------------------------------------------------
+    # 詳細な絞り込み（数値条件のスライダー）
+    # ------------------------------------------------------------------
+    with st.expander("🎚️ 詳細な絞り込み（数値条件）", expanded=False):
+        year_min, year_max = int(df["dpf_kasetsu_nendo"].min()), int(df["dpf_kasetsu_nendo"].max())
+        year_range = st.slider("架設年度", year_min, year_max, (year_min, year_max))
+
+        traffic_min, traffic_max = int(df["traffic_count_24h_auto"].min()), int(df["traffic_count_24h_auto"].max())
+        traffic_range = st.slider("交通量(台/日)", traffic_min, traffic_max, (traffic_min, traffic_max))
+
+        detour_min = int(df["detour_length_m"].min(skipna=True))
+        detour_max = int(df["detour_length_m"].max(skipna=True))
+        detour_range = st.slider("迂回路長(m)", detour_min, detour_max, (detour_min, detour_max))
+        st.caption("迂回路長が算出できなかった橋は、この条件を全範囲から動かすと除外されます。")
+
+    filtered_df = filtered_df[
+        filtered_df["dpf_kasetsu_nendo"].between(*year_range)
+        & filtered_df["traffic_count_24h_auto"].between(*traffic_range)
+    ]
+    if detour_range != (detour_min, detour_max):
+        filtered_df = filtered_df[filtered_df["detour_length_m"].between(*detour_range)]
+
+    st.write(f"**表示件数：{len(filtered_df)} 件** / 全{len(df)}件")
+
     if len(filtered_df) == 0:
         st.info("条件に一致する橋がありません。絞り込み条件を変更してください。")
     else:
-        if selected_bridge != "（指定しない）":
-            map_center = [filtered_df["lat"].iloc[0], filtered_df["lon"].iloc[0]]
-            zoom_start = 16
-        else:
-            map_center = [filtered_df["lat"].mean(), filtered_df["lon"].mean()]
-            zoom_start = 11
-
-        m = folium.Map(location=map_center, zoom_start=zoom_start, tiles="OpenStreetMap")
-        marker_cluster = MarkerCluster().add_to(m)
-
-        for _, row in filtered_df.iterrows():
-            detour_display = f"{row['detour_length_m']:.0f}m" if pd.notna(row["detour_length_m"]) else "算出不可"
-            popup_html = f"""
-            <b>{row['bridge_name']}</b><br>
-            架設年度: {row['dpf_kasetsu_nendo']}年<br>
-            幅員: {row['dpf_fukuin']:.1f}m / 橋長: {row['dpf_kyouchou']:.1f}m<br>
-            交通量: {row['traffic_count_24h_auto']:.0f}台/日<br>
-            迂回路長: {detour_display}<br>
-            分類: {row['cluster_label_ja']}<br>
-            交通量×迂回路: {row['quadrant_label_ja']}<br>
-            優先度順位: {int(row['overall_rank'])}位 / {len(df)}件中
-            """
-            folium.CircleMarker(
-                location=[row["lat"], row["lon"]],
-                radius=6,
-                color=CLUSTER_COLORS.get(row["cluster_6_label"], "#333333"),
-                fill=True,
-                fill_opacity=0.85,
-                popup=folium.Popup(popup_html, max_width=250),
-                tooltip=row["bridge_name"],
-            ).add_to(marker_cluster)
-
         # ------------------------------------------------------------------
-        # 迂回路ルートの描画（トグルON時のみ）
-        # ------------------------------------------------------------------
-        if show_detour_routes and has_route_data:
-            routable_df = filtered_df[filtered_df["detour_route_wkt"].notna()]
-            if len(routable_df) > MAX_ROUTES_TO_DRAW:
-                st.warning(
-                    f"迂回路ルートを表示できる橋が{len(routable_df)}件あり、上限（{MAX_ROUTES_TO_DRAW}件）を超えています。"
-                    " 絞り込み条件を追加するか、特定の橋を1件選択してから表示してください。"
-                )
-            else:
-                for _, row in routable_df.iterrows():
-                    detour_display = f"{row['detour_length_m']:.0f}m" if pd.notna(row["detour_length_m"]) else "算出不可"
-                    for line_coords in route_wkt_to_latlon_lines(row["detour_route_wkt"]):
-                        folium.PolyLine(
-                            line_coords,
-                            color="#2E8B57",
-                            weight=4,
-                            opacity=0.8,
-                            tooltip=f"{row['bridge_name']} の迂回路（長さ約{detour_display}）",
-                        ).add_to(m)
-
-        st.subheader("地図")
-        st.caption("マーカーの色はクラスター（橋の特徴グループ）を表します。クリックすると詳細が表示されます。")
-        if show_detour_routes:
-            st.caption("緑色の線は、その橋が通行止めになった場合の迂回路ルートです。")
-        st_folium(m, width=1100, height=600, returned_objects=[])
-
-        with st.expander("凡例：マーカーの色とクラスターの対応"):
-            for cid, label in CLUSTER_LABELS.items():
-                st.markdown(
-                    f"<span style='color:{CLUSTER_COLORS[cid]}; font-size:20px;'>●</span> {label}",
-                    unsafe_allow_html=True,
-                )
-        # ------------------------------------------------------------------
-        # 一覧表
+        # 一覧表（行を選択すると、下の地図がその橋にズームします）
         # ------------------------------------------------------------------
         st.subheader("一覧表")
+        st.caption("行を選択すると、下の地図がその橋にズームします（もう一度選択を外すと全体表示に戻ります）。")
         display_cols = {
             "bridge_name": "橋梁名",
             "dpf_kasetsu_nendo": "架設年度",
@@ -340,7 +292,98 @@ with tab_map:
             .sort_values("優先度順位")
             .reset_index(drop=True)
         )
-        st.dataframe(table_df, use_container_width=True)
+        table_event = st.dataframe(
+            table_df,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="bridge_table",
+        )
+        selected_rows = table_event.selection.rows if table_event and table_event.selection else []
+        selected_bridge_name = table_df.iloc[selected_rows[0]]["橋梁名"] if selected_rows else None
+
+        # ------------------------------------------------------------------
+        # 地図
+        # ------------------------------------------------------------------
+        st.subheader("地図")
+        if selected_bridge_name is not None:
+            selected_row_full = filtered_df[filtered_df["bridge_name"] == selected_bridge_name].iloc[0]
+            map_center = [selected_row_full["lat"], selected_row_full["lon"]]
+            zoom_start = 16
+        else:
+            map_center = [filtered_df["lat"].mean(), filtered_df["lon"].mean()]
+            zoom_start = 11
+
+        m = folium.Map(location=map_center, zoom_start=zoom_start, tiles="OpenStreetMap")
+        marker_cluster = MarkerCluster().add_to(m)
+
+        for _, row in filtered_df.iterrows():
+            detour_display = f"{row['detour_length_m']:.0f}m" if pd.notna(row["detour_length_m"]) else "算出不可"
+            is_selected = row["bridge_name"] == selected_bridge_name
+            popup_html = f"""
+            <b>{row['bridge_name']}</b><br>
+            架設年度: {row['dpf_kasetsu_nendo']}年<br>
+            幅員: {row['dpf_fukuin']:.1f}m / 橋長: {row['dpf_kyouchou']:.1f}m<br>
+            交通量: {row['traffic_count_24h_auto']:.0f}台/日<br>
+            迂回路長: {detour_display}<br>
+            分類: {row['cluster_label_ja']}<br>
+            交通量×迂回路: {row['quadrant_label_ja']}<br>
+            優先度順位: {int(row['overall_rank'])}位 / {len(df)}件中
+            """
+            folium.CircleMarker(
+                location=[row["lat"], row["lon"]],
+                radius=10 if is_selected else 6,
+                color="#FFD700" if is_selected else CLUSTER_COLORS.get(row["cluster_6_label"], "#333333"),
+                fill=True,
+                fill_color=CLUSTER_COLORS.get(row["cluster_6_label"], "#333333"),
+                fill_opacity=0.95 if is_selected else 0.85,
+                weight=3 if is_selected else 1,
+                popup=folium.Popup(popup_html, max_width=250),
+                tooltip=row["bridge_name"],
+            ).add_to(marker_cluster)
+
+        # ------------------------------------------------------------------
+        # 迂回路ルートの描画（トグルON時のみ）
+        # ------------------------------------------------------------------
+        if show_detour_routes and has_route_data:
+            if selected_bridge_name is not None:
+                # 特定の橋が選択されている場合は、他の絞り込み件数にかかわらずその橋だけ描画する
+                routable_df = filtered_df[
+                    (filtered_df["bridge_name"] == selected_bridge_name)
+                    & filtered_df["detour_route_wkt"].notna()
+                ]
+            else:
+                routable_df = filtered_df[filtered_df["detour_route_wkt"].notna()]
+
+            if selected_bridge_name is None and len(routable_df) > MAX_ROUTES_TO_DRAW:
+                st.warning(
+                    f"迂回路ルートを表示できる橋が{len(routable_df)}件あり、上限（{MAX_ROUTES_TO_DRAW}件）を超えています。"
+                    " 絞り込み条件を追加するか、一覧表で橋を1件選択してから表示してください。"
+                )
+            else:
+                for _, row in routable_df.iterrows():
+                    detour_display = f"{row['detour_length_m']:.0f}m" if pd.notna(row["detour_length_m"]) else "算出不可"
+                    for line_coords in route_wkt_to_latlon_lines(row["detour_route_wkt"]):
+                        folium.PolyLine(
+                            line_coords,
+                            color="#2E8B57",
+                            weight=4,
+                            opacity=0.8,
+                            tooltip=f"{row['bridge_name']} の迂回路（長さ約{detour_display}）",
+                        ).add_to(m)
+
+        st.caption("マーカーの色はクラスター（橋の特徴グループ）を表します。金色の枠は一覧表で選択中の橋です。クリックすると詳細が表示されます。")
+        if show_detour_routes:
+            st.caption("緑色の線は、その橋が通行止めになった場合の迂回路ルートです。")
+        st_folium(m, width=1100, height=600, returned_objects=[])
+
+        with st.expander("凡例：マーカーの色とクラスターの対応"):
+            for cid, label in CLUSTER_LABELS.items():
+                st.markdown(
+                    f"<span style='color:{CLUSTER_COLORS[cid]}; font-size:20px;'>●</span> {label}",
+                    unsafe_allow_html=True,
+                )
 
 # ============================= EDAタブ =======================================
 with tab_eda:
@@ -382,6 +425,16 @@ with tab_eda:
                 margin=dict(l=10, r=10, t=40, b=10), height=280,
             )
             st.plotly_chart(fig, use_container_width=True)
+
+    # --- 相関ヒートマップ ---
+    st.subheader("数値変数の相関")
+    corr = df[list(numeric_cols.keys())].rename(columns=numeric_cols).corr()
+    fig = px.imshow(
+        corr, text_auto=".2f", color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
+        aspect="auto",
+    )
+    fig.update_layout(margin=dict(l=10, r=10, t=20, b=10), height=500)
+    st.plotly_chart(fig, use_container_width=True)
 
     # --- カテゴリ変数の分布（全体） ---
     st.subheader("カテゴリ変数の分布（全体）")
@@ -482,20 +535,70 @@ with tab_eda:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- 相関ヒートマップ ---
-    st.subheader("数値変数の相関")
-    corr = df[list(numeric_cols.keys())].rename(columns=numeric_cols).corr()
-    fig = px.imshow(
-        corr, text_auto=".2f", color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
-        aspect="auto",
-    )
-    fig.update_layout(margin=dict(l=10, r=10, t=20, b=10), height=500)
-    st.plotly_chart(fig, use_container_width=True)
-
     st.caption(
         "各クラスターの特徴の言語的な解釈は、notebook（`03_eda_clustering.ipynb`）内の"
         "「クラスター分析（6分類）解釈まとめ」、または`cluster_interpretation.md`を参照してください。"
     )
+
+# ============================= 優先順位タブ ===================================
+with tab_priority:
+    st.caption("補修・補強の優先順位をどのように決めているか（`04_integrated_evaluation.ipynb`で行った処理）の説明です。")
+
+    st.subheader("① 交通量×迂回路長による4象限分類")
+    st.markdown(
+        "各橋を「交通量」と「迂回路長」それぞれの**全体の中央値**を基準に、4つの象限に分類しています。"
+        "通行止めになった際に、利用交通量が多く・迂回距離も長い橋（右上）ほど、地域への影響が大きいと考えます。"
+    )
+
+    median_traffic = df["traffic_count_24h_auto"].median()
+    median_detour = df["detour_length_m"].median()
+
+    fig = px.scatter(
+        df, x="traffic_count_24h_auto", y="detour_length_m",
+        color="cluster_label_ja",
+        color_discrete_map={CLUSTER_LABELS[c]: CLUSTER_COLORS[c] for c in order},
+        hover_name="bridge_name",
+        labels={"traffic_count_24h_auto": "交通量(台/日)", "detour_length_m": "迂回路長(m)", "cluster_label_ja": "クラスター"},
+        opacity=0.65,
+    )
+    fig.add_vline(x=median_traffic, line_dash="dash", line_color="red",
+                   annotation_text=f"交通量 中央値: {median_traffic:.0f}台", annotation_position="top")
+    fig.add_hline(y=median_detour, line_dash="dash", line_color="green",
+                   annotation_text=f"迂回路長 中央値: {median_detour:.0f}m", annotation_position="top left")
+    fig.update_layout(height=550, legend_title="クラスター")
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("グラフ右上の橋ほど、交通量が多く迂回距離も長い＝通行止め時の影響が大きい橋です。凡例クリックでクラスターの表示/非表示を切り替えられます。")
+
+    st.subheader("② スコアリングの考え方")
+    st.markdown(
+        "上記の4象限分類に加えて、`03_eda_clustering.ipynb`で行ったクラスター分析（6分類）の解釈も踏まえ、"
+        "以下の2つの優先度を組み合わせて総合優先度スコアを算出しています。値が**小さいほど優先度が高い**ものとして扱います。"
+    )
+    st.markdown(
+        "- **4象限の優先度**：右上（交通量多×迂回路長）を最優先とし、右下・左上・左下の順\n"
+        "- **クラスターの優先度**：「交通集中×長距離迂回」を最優先とし、「高交通需要」「老朽化進行」「超長大橋」"
+        "「標準橋群（幹線）」「標準橋群」の順\n"
+        "- **総合優先度スコア** = 4象限の優先度 × 2 ＋ クラスターの優先度（同点の場合は交通量・迂回路長の降順で順位を決定）"
+    )
+    st.caption("各クラスターの特徴の詳しい解釈は、EDAタブの「クラスター特徴のレーダーチャート」もあわせてご覧ください。")
+
+    st.subheader("③ 総合優先度ランキング（上位20件）")
+    rank_display_cols = {
+        "overall_rank": "優先度順位",
+        "bridge_name": "橋梁名",
+        "cluster_label_ja": "クラスター",
+        "quadrant_label_ja": "交通量×迂回路",
+        "traffic_count_24h_auto": "交通量(台/日)",
+        "detour_length_m": "迂回路長(m)",
+    }
+    top20_df = (
+        df.sort_values("overall_rank")
+        .head(20)[list(rank_display_cols.keys())]
+        .rename(columns=rank_display_cols)
+        .reset_index(drop=True)
+    )
+    st.dataframe(top20_df, use_container_width=True, hide_index=True)
+    st.caption("全件の一覧・地図上での確認は「地図」タブをご覧ください。")
 
 # ---------------------------------------------------------------------------
 # ページ下部フッター：使用データの出典・注意事項
