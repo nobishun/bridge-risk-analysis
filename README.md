@@ -4,7 +4,9 @@
 オープンデータから東京23区の橋梁データをもとに、**交通量・迂回路長**などの観点から、
 補修・補強の優先度設定を試行した結果を可視化するダッシュボードです。
 
-**🔗 アプリはこちら**: https://bridge-risk-analysis-kwb44vmgfauxjuehd5ch3h.streamlit.app/
+**🔗 アプリはこちら**: https://bridge-risk-analysis-kwb44vmgfauxjuehd5ch3h.streamlit.app/  
+  
+※最終更新: 2026年7月。学習目的のデモであり、実際の補修判断には使用できません。
 
 ---
 
